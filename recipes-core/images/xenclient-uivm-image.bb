@@ -98,6 +98,7 @@ IMAGE_INSTALL += "\
     matchbox-keyboard \
     matchbox-keyboard-im \
     kernel-module-openxtfb \
+    nvidia-open-gpu-kernel-modules \
     grub-xen-conf \
 "
 

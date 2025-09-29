@@ -41,9 +41,16 @@ IMAGE_INSTALL = "\
     linux-firmware-i915 \
     linux-firmware-nvidia-gpu \
     linux-firmware-radeon \
-    libdrm-nouveau \
     libdrm-radeon \
+    nvidia-open-gpu-kernel-modules \
 "
+
+# Keep core libdrm and modesetting driver
+IMAGE_INSTALL:append = " libdrm xf86-video-modesetting "
+
+IMAGE_INSTALL:append = " kernel-module-nvidia kernel-module-nvidia-modeset kernel-module-nvidia-drm kernel-module-nvidia-uvm "
+KERNEL_MODULE_AUTOLOAD += " nvidia nvidia-modeset nvidia-drm "
+
 # The entire installer rootfs is passed as the initramfs.
 # Inflate the maximum value to 512M to reflect that (original definition is
 # 128M in bitbake.conf)

@@ -46,8 +46,12 @@ IMAGE_INSTALL += "\
     xenclient-preload-hs-libs \
     linux-firmware-i915 \
     devicemodel-stubdom \
+    nvidia-open-gpu-kernel-modules \
     ${@bb.utils.contains('IMAGE_FEATURES', 'debug-tweaks', 'packagegroup-selinux-policycoreutils audit', '' ,d)} \
 "
+
+# Keep core libdrm and modesetting driver
+IMAGE_INSTALL:append = " libdrm xf86-video-modesetting "
 
 inherit xenclient-licences
 
