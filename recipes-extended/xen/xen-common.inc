@@ -6,6 +6,9 @@ FILESEXTRAPATHS_prepend := "${THISDIR}/files:"
 
 SRC_URI_append = " \
     file://defconfig \
+    file://aem-slaunch-changes.patch \
+    file://ap-wakeup-fix.patch \
+    file://shim-lock-verify.patch \
     file://0001-python-pygrub-pass-DISTUTILS-xen.4.12.patch \
     file://kconfig-grant-table-v2-interface.patch \
     file://kconfig-grant-table-exotic.patch \
@@ -23,7 +26,6 @@ SRC_URI_append = " \
     file://gpt-s3-resume-reason.patch;patch=1 \
     file://increase-ap-startup-time.patch;patch=1 \
     file://acpi-slic-support.patch \
-    file://tboot-xen-evtlog-support.patch \
     file://libxl-syslog.patch \
     file://libxl-vif-cleanup.patch \
     file://libxl-vif-make-ioemu-and-stubdom-mac-addresses-configurable.patch \
@@ -48,10 +50,6 @@ SRC_URI_append = " \
     file://libxl-block-scripts-log-to-syslog.patch \
     file://0001-convert-block-tap-for-shared.patch \
     file://domain-reboot.patch \
-    file://efi-hardcode-openxt-cfg.patch \
-    file://shim-support-for-shim-lock-measure.patch \
-    file://efi-require-shim.patch \
-    file://tboot-measure-and-launch-from-xen-efi.patch \
     file://argo-add-viptables.patch \
     file://argo-quiet-xsm-check-during-init.patch \
     file://libxl-seabios-ipxe.patch \

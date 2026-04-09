@@ -581,16 +581,16 @@ tpm_take_ownership() {
     return 0
 }
 
-# Write a tboot policy to a TPM2 NV index
+# Write a TrenchBoot policy to a TPM2 NV index
 # will only write if necessary
-# $1 - New tboot policy file
+# $1 - New TrenchBoot policy file
 # $2 - NV index
 # $3 - TPM password
 # Standard 0 success return value
-tpm2_write_tboot_policy() {
+tpm2_write_trenchboot_policy() {
     local policy="$1"
     # remove leading 0s from hex index to match tpm2_nvlist output
-    local tboot_idx="$( tpm2_normalize $2 )"
+    local trenchboot_idx="$( tpm2_normalize $2 )"
     local password="$3"
     local old_policy="${policy}.old"
     local polsize=$(cat "${policy}" | wc -c)
@@ -604,12 +604,12 @@ tpm2_write_tboot_policy() {
     local TPMA_NV_TPMA_NV_AUTHWRITE=0x00000004
     local TPMA_NV_TPMA_NV_OWNERREAD=0x00020000
     local TPMA_NV_TPMA_NV_AUTHREAD=0x00040000
-    local TBOOT_NV_ATTRIB="$( tpm2_normalize $(( TPMA_NV_TPMA_NV_OWNERWRITE | \
-                                                 TPMA_NV_TPMA_NV_AUTHWRITE  | \
-                                                 TPMA_NV_TPMA_NV_OWNERREAD  | \
-                                                 TPMA_NV_TPMA_NV_AUTHREAD )) )"
+    local TRENCHBOOT_NV_ATTRIB="$( tpm2_normalize $(( TPMA_NV_TPMA_NV_OWNERWRITE | \
+                                                      TPMA_NV_TPMA_NV_AUTHWRITE  | \
+                                                      TPMA_NV_TPMA_NV_OWNERREAD  | \
+                                                      TPMA_NV_TPMA_NV_AUTHREAD )) )"
 
-    local idx=$( tpm2_nvlist | sed -n "/${tboot_idx}:/,/^$/p" | sed "/^$/d" )
+    local idx=$( tpm2_nvlist | sed -n "/${trenchboot_idx}:/,/^$/p" | sed "/^$/d" )
     local attr=$( echo "${idx}" | \
                   sed -n "/attributes:/,/value:/p" | \
                   awk -F: '/value:/ { print $2 }' | \
@@ -621,7 +621,7 @@ tpm2_write_tboot_policy() {
     # Read the current contents into a temp file.
     # tpm2_nvread could fail, and this ends up being a big pipeline to
     # create an empty file, but that is fine for below.
-    tpm2_nvread -x "${tboot_idx}" -a "${TPM_RH_OWNER}" -P "${password}" \
+    tpm2_nvread -x "${trenchboot_idx}" -a "${TPM_RH_OWNER}" -P "${password}" \
                 -s "${size}" -o 0 2>/dev/null \
         | tail -n 1 | tr -d ' ' | hex2bin > "${old_policy}"
 
@@ -634,15 +634,15 @@ tpm2_write_tboot_policy() {
 
     if [ "${size}" != "${polsize}" -o \
          "$( tpm2_normalize $(( attr & ~TPMA_NV_TPMA_NV_WRITTEN )) )" != \
-	     "${TBOOT_NV_ATTRIB}" ]; then
-        tpm2_nvrelease -x "${tboot_idx}" -a "${TPM_RH_OWNER}" -P "${password}" \
+	     "${TRENCHBOOT_NV_ATTRIB}" ]; then
+        tpm2_nvrelease -x "${trenchboot_idx}" -a "${TPM_RH_OWNER}" -P "${password}" \
                        >/dev/null 2>&1
-        tpm2_nvdefine -x "${tboot_idx}" -a "${TPM_RH_OWNER}" -P "${password}" \
-                      -s "${polsize}" -t "${TBOOT_NV_ATTRIB}" >/dev/null 2>&1 \
+        tpm2_nvdefine -x "${trenchboot_idx}" -a "${TPM_RH_OWNER}" -P "${password}" \
+                      -s "${polsize}" -t "${TRENCHBOOT_NV_ATTRIB}" >/dev/null 2>&1 \
             || return 1
     fi
 
-    tpm2_nvwrite -x "${tboot_idx}" -a "${TPM_RH_OWNER}" -P "${password}" \
+    tpm2_nvwrite -x "${trenchboot_idx}" -a "${TPM_RH_OWNER}" -P "${password}" \
                  "${policy}" >/dev/null 2>&1
 }
 

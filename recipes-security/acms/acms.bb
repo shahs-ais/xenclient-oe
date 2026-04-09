@@ -3,6 +3,10 @@ HOMEPAGE = "https://software.intel.com/en-us/articles/intel-trusted-execution-te
 BUGTRACKER = "https://software.intel.com/en-us/forums/intel-trusted-execution-technology-intel-txt"
 SECTION = "bootloaders"
 LICENSE = "Intel-ACMs"
+
+# TODO: refactor to only use the updated ACM files (slaunch will not work on older ACMs with incorrect capbability structs)
+# For now just adding them as checked in files here, eventually need to be added to openxt mirror
+FILESEXTRAPATHS_prepend := "${THISDIR}/../trenchboot/files:"
 LIC_FILES_CHKSUM = " \
     file://GM45_GS45_PM45-SINIT_51/license.txt;md5=60d123634e0b94f8c425003389e64bda \
     file://Q45_Q43-SINIT_51/license.txt;md5=60d123634e0b94f8c425003389e64bda \
@@ -32,6 +36,15 @@ SRC_URI = " \
     ${OPENXT_MIRROR}/6th_gen_i5_i7-SINIT_71.zip;name=skl \
     ${OPENXT_MIRROR}/7th_gen_i5_i7-SINIT_74.zip;name=kbl \
     ${OPENXT_MIRROR}/8th_gen_i5_i7-SINIT_76.zip;name=cfl \
+    file://SKL_KBL_AML_SINIT_20211019_PRODUCTION_REL_NT_O1_1.10.0.bin \
+    file://LNC_SINIT_REL_NT_O1.PW_signed.bin \
+    file://ADL_SINIT_v1_18_18_20240523_REL_NT_O1.PW_signed.bin \
+    file://MTL_SINIT_REL_NT_O1.PW_signed.bin \
+    file://CFL_SINIT_20221220_PRODUCTION_REL_NT_O1_1.10.1_signed.bin \
+    file://TGL_SINIT_v1_14_46_20220819_REL_NT_O1.PW_signed.bin \
+    file://RKLS_SINIT_v1_14_46_20220819_REL_NT_O1.PW_signed.bin \
+    file://CMLSTGP_SINIT_v1_14_46_20220819_REL_NT_O1.PW_signed.bin \
+    file://CML_S_SINIT_1_13_33_REL_NT_O1.PW_signed.bin \
 "
 
 SRC_URI[gm45.md5sum] = "330c774e71fe390d7ab649d5e2b1d504"
@@ -60,6 +73,24 @@ SRC_URI[kbl.md5sum] = "542133cb3e6911bda1e83d27fc0872b2"
 SRC_URI[kbl.sha256sum] = "a3ea9055c27481ed48e5ce8b7e02d37e8d27cff4fd1cf911ff219b8e210ccfaf"
 SRC_URI[cfl.md5sum] = "b46e104a739a553e30c48e91c3649b7d"
 SRC_URI[cfl.sha256sum] = "401c29887bb6abfa1f3c90ce03e550fd0cf23892aa97bdfab34b7aa2bdc72976"
+SRC_URI[CFL_SINIT_20221220_PRODUCTION_REL_NT_O1_1.10.1_signed.bin.md5sum] = "d18ba02daa2c14a50ec7b400589a9f45"
+SRC_URI[CFL_SINIT_20221220_PRODUCTION_REL_NT_O1_1.10.1_signed.bin.sha256sum] = "ad6b7fc3ba3f4d4de2932f39cf00b206aa922bade57497e42ce97f2162f9361e"
+SRC_URI[SKL_KBL_AML_SINIT_20211019_PRODUCTION_REL_NT_O1_1.10.0.bin.md5sum] = "03fc1c63b129a18e63023e5d375eedcb"
+SRC_URI[SKL_KBL_AML_SINIT_20211019_PRODUCTION_REL_NT_O1_1.10.0.bin.sha256sum] = "f43470267af72eec5e7354cddbccbc8c6d0263802e48bcd85f95e1b2ae249327"
+SRC_URI[LNC_SINIT_REL_NT_O1.PW_signed.bin.md5sum] = "835d70b668b8ec7bf97b2025f43528bc"
+SRC_URI[LNC_SINIT_REL_NT_O1.PW_signed.bin.sha256sum] = "187e3d750b55c05dd5df15c23b86eebd0b3fecb913fee9fb6202ba88a286baab"
+SRC_URI[ADL_SINIT_v1_18_18_20240523_REL_NT_O1.PW_signed.bin.md5sum] = "3205c1fbda327c34403b7ecd3c5f9aaf"
+SRC_URI[ADL_SINIT_v1_18_18_20240523_REL_NT_O1.PW_signed.bin.sha256sum] = "06df3181122700c9937c9be73c77d3b47d71ff6ebc22c1ec0e2224d9fdd40d6a"
+SRC_URI[MTL_SINIT_REL_NT_O1.PW_signed.bin.md5sum] = "8a9f672c84756d6dd3aa382b5aea8a2b"
+SRC_URI[MTL_SINIT_REL_NT_O1.PW_signed.bin.sha256sum] = "acd3601e1dde18ed9cdfb8ee68fbcd9811a0e7e49609126d8198b2b7f017de8f"
+SRC_URI[TGL_SINIT_v1_14_46_20220819_REL_NT_O1.PW_signed.bin.md5sum] = "1c90662cff90063583b82d42bb9cdc66"
+SRC_URI[TGL_SINIT_v1_14_46_20220819_REL_NT_O1.PW_signed.bin.sha256sum] = "e87488bff9c38c5a48056925991131d48a2c9a30e459cf88b8559e4895ec1ba5"
+SRC_URI[RKLS_SINIT_v1_14_46_20220819_REL_NT_O1.PW_signed.bin.md5sum] = "bd529b3793cd767badaa8f92bcef5a24"
+SRC_URI[RKLS_SINIT_v1_14_46_20220819_REL_NT_O1.PW_signed.bin.sha256sum] = "eb4a6044f421fbab6ed018d2692f2afbeb0162e8b228945fcb04b663be4d5ac1"
+SRC_URI[CMLSTGP_SINIT_v1_14_46_20220819_REL_NT_O1.PW_signed.bin.md5sum] = "d7ff2779f82d2752ae0e13c31146c989"
+SRC_URI[CMLSTGP_SINIT_v1_14_46_20220819_REL_NT_O1.PW_signed.bin.sha256sum] = "b24a6e5ead2910b3ccbb8edbe32e3430a1d694481dfdb17c9069de5e50200371"
+SRC_URI[CML_S_SINIT_1_13_33_REL_NT_O1.PW_signed.bin.md5sum] = "c7554bc5548e440eaf6e2ce289cebfbd"
+SRC_URI[CML_S_SINIT_1_13_33_REL_NT_O1.PW_signed.bin.sha256sum] = "69075f1153e884ac78fcf0a3e2095dd023d56e9e250d13e9c848ddd88e3764b3"
 
 PR = "r3"
 
@@ -92,7 +123,6 @@ do_deploy() {
     install -m 0644 "${D}/boot/5th_gen_i5_i7_SINIT_79.BIN" "${DEPLOYDIR}/bdw.acm"
     install -m 0644 "${D}/boot/6th_gen_i5_i7_SINIT_71.BIN" "${DEPLOYDIR}/skl.acm"
     install -m 0644 "${D}/boot/7th_gen_i5_i7-SINIT_74.bin" "${DEPLOYDIR}/kbl.acm"
-    install -m 0644 "${D}/boot/8th_gen_i5_i7-SINIT_76.bin" "${DEPLOYDIR}/cfl.acm"
     install -m 0644 "${D}/boot/license-SINIT-ACMs.txt" "${DEPLOYDIR}/license-SINIT-ACMs.txt"
 }
 addtask do_deploy after do_install before do_build

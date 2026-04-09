@@ -1,2 +1,7 @@
-search --file --set=root /isolinux/xen.gz
-set prefix=($root)/isolinux
+if search --file --set=root /EFI/OpenXT/grub.cfg; then
+    configfile /EFI/OpenXT/grub.cfg
+elif search --file --set=root /isolinux/xen.gz; then
+    set prefix=($root)/isolinux
+else
+    echo "Could not find /EFI/OpenXT/grub.cfg"
+fi

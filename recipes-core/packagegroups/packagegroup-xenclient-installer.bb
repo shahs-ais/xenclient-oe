@@ -44,8 +44,6 @@ RDEPENDS_${PN} = " \
     syslinux-ldlinux \
     syslinux-mboot \
     syslinux-pxelinux \
-    tboot \
-    tboot-utils \
     tpm2-tss \
     tpm2-tools \
     tpm-tools \

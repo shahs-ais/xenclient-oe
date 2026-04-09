@@ -14,11 +14,6 @@ if [ ! -f /usr/lib/openxt/ml-functions ]; then
 fi
 . /usr/lib/openxt/ml-functions
 
-# Load optional script configuration.
-if [ -f /etc/openxt/seal-system.conf ]; then
-    . /etc/openxt/seal-system.conf
-fi
-
 # Usage: constains_only STRING CHARACTER
 # Succeeds when all the characters in STRING are CHARACTER.
 contains_only() {
@@ -94,8 +89,6 @@ root_dev="/dev/mapper/xenclient-root"
 # UEFI spec compliant.
 pcr4_objs=(
     /boot/shimx64.efi
-    /boot/xen.efi
-    /boot/tboot
     /boot/xen.efi
     /boot/bzImage
 )
@@ -214,10 +207,10 @@ forward)
     # Calculate DRTM PCRs if set (ie. PCR17 is not all f)
     if ! contains_only "${pcr17}" "f"; then
         if ! contains_only "${pcr8}" 0; then
-            pcrs=$(calculate_drtm_pcrs "/" /usr/share/xenclient/bootloader/openxt.cfg ${hashalg} 1 ${FWS_TBOOT_VERSION} ${FWS_EVTLOG_OVERRIDE}) ||
+            pcrs=$(calculate_slaunch_pcrs "/" /usr/share/xenclient/bootloader/openxt.cfg ${hashalg} 1) ||
                 err "failed to calculate pcrs"
         else
-            pcrs=$(calculate_drtm_pcrs "/" /boot/system/grub/grub.cfg ${hashalg} 0 ${FWS_TBOOT_VERSION} ${FWS_EVTLOG_OVERRIDE}) ||
+            pcrs=$(calculate_slaunch_pcrs "/" /boot/system/grub/grub.cfg ${hashalg} 0) ||
                 err "failed to calculate pcrs"
         fi
 

@@ -28,6 +28,17 @@ EXTRA_OEMAKE += " \
 # even when MACHINE is 32-bit, disable this usual arch sanity check:
 INSANE_SKIP_${PN}-dbg = "arch"
 
+# Include openxt.cfg in the package files
+FILES_${PN} += "/boot/openxt.cfg"
+
+# Add path to find openxt.cfg from xenclient-dom0-tweaks
+FILESEXTRAPATHS_prepend := "${THISDIR}/../../recipes-openxt/xenclient-dom0-tweaks/xenclient-dom0-tweaks:"
+
+# Add openxt.cfg from xenclient-dom0-tweaks as a source file
+SRC_URI_append = " \
+    file://openxt.cfg \
+"
+
 do_configure() {
     echo "debug := n" > .config
     echo "XSM_ENABLE := y" >> .config
@@ -57,5 +68,9 @@ do_install_append() {
 
     # Install the efi binary into /boot rather than /usr/lib64/efi
     install -m 600 ${B}/xen/xen.efi ${D}/boot/
+    install -m 600 ${B}/xen/xen.gz ${D}/boot/
     rm -rf ${D}/usr/lib64
+
+    # Install the existing openxt.cfg file from xenclient-dom0-tweaks
+    install -m 0644 ${WORKDIR}/openxt.cfg ${D}/boot/openxt.cfg
 }

@@ -6,31 +6,44 @@ SRC_URI = " \
     file://ml-functions \
     file://seal-system \
     file://recovery-method \
-    file://seal-system.conf \
+    file://dump-slaunch-eventlog \
+    file://tpm2-evt-log-parser.awk \
+    file://tpm-evt-log-utils.awk \
+    file://openxt-tpm2-evt-log-parser.in \
 "
 
 FILES_${PN} = "\
     ${libdir}/openxt/ml-functions \
+    ${libdir}/openxt/tpm2-evt-log-parser.awk \
+    ${libdir}/openxt/tpm-evt-log-utils.awk \
     ${sbindir}/seal-system \
     ${sbindir}/recovery-method \
-    ${sysconfdir}/openxt/seal-system.conf \
+    ${sbindir}/dump-slaunch-eventlog \
+    ${bindir}/openxt-tpm2-evt-log-parser \
     "
 
 do_install() {
     install -d ${D}${libdir}/openxt
     install -d ${D}${sbindir}
     install -m 0755 ${WORKDIR}/ml-functions ${D}${libdir}/openxt
+    install -m 0644 ${WORKDIR}/tpm2-evt-log-parser.awk ${D}${libdir}/openxt/
+    install -m 0644 ${WORKDIR}/tpm-evt-log-utils.awk ${D}${libdir}/openxt/
     install -m 0755 ${WORKDIR}/seal-system ${D}${sbindir}
     install -m 0755 ${WORKDIR}/recovery-method ${D}${sbindir}
+    install -m 0755 ${WORKDIR}/dump-slaunch-eventlog ${D}${sbindir}
+    install -d ${D}${bindir}
+    sed -e "s|@LIBDIR@|${libdir}|g" -e "s|@BINDIR@|${bindir}|g" \
+        ${WORKDIR}/openxt-tpm2-evt-log-parser.in > ${D}${bindir}/openxt-tpm2-evt-log-parser
+    chmod 0755 ${D}${bindir}/openxt-tpm2-evt-log-parser
     install -d ${D}${sysconfdir}/openxt
-    install -m 0644 ${WORKDIR}/seal-system.conf ${D}${sysconfdir}/openxt/seal-system.conf
 }
 
 RDEPENDS_${PN} = " \
     bash \
-    tboot-lcptools \
-    tboot-lcptools-v2 \
-    tboot-utils \
-    tboot-pcr-calc \
     openxt-keymanagement \
+    tpm2-tools \
+    gawk \
+    coreutils \
 "
+# Provide xxd if available for PCR expected value logs in event parser
+RRECOMMENDS_${PN} += "vim"

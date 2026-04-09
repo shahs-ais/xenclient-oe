@@ -1,0 +1,86 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage: dump-slaunch-eventlog [-o FILE] [--decode]
+
+Dump the Secure Launch event log from kernel-exported sources (e.g. debugfs raw.bin).
+
+Options:
+  -o FILE    Write raw binary event log to FILE (default: /tmp/slaunch-eventlog.bin)
+  --decode   Decode TPM2 log (tpm2_eventlog, or AEM openxt-tpm2-evt-log-parser)
+  -h         Show this help
+EOF
+}
+
+out_file="/tmp/slaunch-eventlog.bin"
+decode=0
+log_src=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o)
+            out_file="$2"
+            shift 2
+            ;;
+        --decode)
+            decode=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+# Kernel-exported event log only (no /dev/mem).
+# Mount debugfs first so /sys/kernel/debug/... paths can appear.
+ensure_debugfs() {
+    if [[ -r /proc/mounts ]] && awk '$2 == "/sys/kernel/debug" && $3 == "debugfs" { exit 0 } END { exit 1 }' /proc/mounts; then
+        return 0
+    fi
+    mkdir -p /sys/kernel/debug 2>/dev/null
+    mount -t debugfs none /sys/kernel/debug 2>/dev/null || true
+}
+ensure_debugfs
+
+for p in \
+    /sys/kernel/debug/slaunch_eventlog/raw.bin \
+    /sys/kernel/debug/txt_info/slaunch_eventlog.bin \
+    /sys/kernel/security/txt/tpm20_binary_evtlog \
+    /sys/kernel/security/txt/tpm20_binary_evtlog_tcg \
+    /sys/kernel/security/txt/tpm20_binary_evtlog_legacy \
+    /sys/kernel/security/txt/tpm12_binary_evtlog
+do
+    if [[ -r "${p}" ]]; then
+        log_src="${p}"
+        break
+    fi
+done
+
+if [[ -n "${log_src}" ]]; then
+    cp "${log_src}" "${out_file}"
+    printf "Wrote event log to %s (source=%s)\n" "${out_file}" "${log_src}"
+else
+    echo "No kernel-exported Secure Launch event log found (e.g. /sys/kernel/debug/slaunch_eventlog/raw.bin)." >&2
+    echo "Run as root so debugfs can be mounted, and ensure slaunch_eventlog exposes raw.bin." >&2
+    exit 1
+fi
+
+if [[ "${decode}" -eq 1 ]]; then
+    if command -v tpm2_eventlog >/dev/null 2>&1; then
+        tpm2_eventlog "${out_file}"
+    elif command -v openxt-tpm2-evt-log-parser >/dev/null 2>&1; then
+        openxt-tpm2-evt-log-parser "${out_file}"
+    else
+        echo "Requested --decode but neither tpm2_eventlog nor openxt-tpm2-evt-log-parser is available." >&2
+        exit 1
+    fi
+fi

@@ -67,6 +67,9 @@ do_install () {
 	install -d ${D}/usr/share/xenclient/bootloader
 	install -m 0644 ${WORKDIR}/grub.cfg \
 		${D}/usr/share/xenclient/bootloader
+	install -d ${D}/boot/EFI/OpenXT
+	install -m 0644 ${WORKDIR}/grub.cfg \
+		${D}/boot/EFI/OpenXT
 	install -m 0644 ${WORKDIR}/openxt.cfg \
 		${D}/usr/share/xenclient/bootloader
 	install -m 0644 ${WORKDIR}/BOOT.CSV \

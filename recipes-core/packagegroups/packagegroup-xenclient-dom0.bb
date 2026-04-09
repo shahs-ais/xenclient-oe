@@ -25,8 +25,6 @@ RDEPENDS_${PN} = " \
     xen-xsm-policy \
     grub \
     shim \
-    tboot \
-    tboot-utils \
     e2fsprogs-tune2fs \
     e2fsprogs-resize2fs \
     kernel-modules \

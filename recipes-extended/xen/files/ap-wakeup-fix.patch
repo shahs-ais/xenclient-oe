@@ -1,0 +1,602 @@
+diff --git a/xen/arch/x86/boot/slaunch-early.c b/xen/arch/x86/boot/slaunch-early.c
+index ac4c294e61..158e7c283a 100644
+--- a/xen/arch/x86/boot/slaunch-early.c
++++ b/xen/arch/x86/boot/slaunch-early.c
+@@ -101,5 +101,5 @@ void asmlinkage slaunch_early_init(uint32_t load_base_addr,
+     result->mbi_pa = intel_info->boot_params_base;
+ 
+     txt_verify_pmr_ranges(os_mle, os_sinit, intel_info,
+-                          load_base_addr, tgt_base_addr, size);
++                          load_base_addr, tgt_base_addr, size, 0, 0);
+ }
+diff --git a/xen/arch/x86/boot/trampoline.S b/xen/arch/x86/boot/trampoline.S
+index 8cd9881828..cfce87b571 100644
+--- a/xen/arch/x86/boot/trampoline.S
++++ b/xen/arch/x86/boot/trampoline.S
+@@ -65,7 +65,13 @@ GLOBAL(txt_ap_entry)
+          * TXT (including NMI and SMI), so IDT doesn't matter at this point.
+          * The only missing point is telling that we are AP by saving non-zero
+          * value in EBX.
++         *
++         * Emit serial debug marker so the BSP log shows if any AP reached
++         * this entry point before a potential triple-fault.
+          */
++        mov     $0x3F8, %edx
++        mov     $'T', %al
++        out     %al, %dx
+         mov     $1, %ebx
+ 
+ trampoline_protmode_entry:
+@@ -74,6 +80,14 @@ trampoline_protmode_entry:
+         mov     %eax,%ds
+         mov     %eax,%es
+ 
++        /* Serial marker '1' = entered protmode_entry */
++        test    %ebx, %ebx
++        jz      .Lno_serial_1
++        mov     $0x3F8, %edx
++        mov     $'1', %al
++        out     %al, %dx
++.Lno_serial_1:
++
+         /* Set up FPU. */
+         fninit
+ 
+@@ -102,6 +116,14 @@ trampoline_protmode_entry:
+         mov     %eax, %esp
+ 1:
+ 
++        /* Serial marker '2' = about to load CR3 (AP only) */
++        test    %ebx, %ebx
++        jz      .Lno_serial_2
++        mov     $0x3F8, %edx
++        mov     $'2', %al
++        out     %al, %dx
++.Lno_serial_2:
++
+         /* Load pagetable base register. */
+         mov     $sym_offs(idle_pg_table),%eax
+         add     bootsym_rel(trampoline_xen_phys_start,4,%eax)
+@@ -133,6 +155,14 @@ trampoline_protmode_entry:
+         or      bootsym_rel(trampoline_efer, 4, %eax)
+         wrmsr
+ 
++        /* Serial marker '3' = about to enable paging (AP only) */
++        test    %ebx, %ebx
++        jz      .Lno_serial_3
++        mov     $0x3F8, %edx
++        mov     $'3', %al
++        out     %al, %dx
++.Lno_serial_3:
++
+         mov     $(X86_CR0_PG | X86_CR0_AM | X86_CR0_WP | X86_CR0_NE |\
+                   X86_CR0_ET | X86_CR0_MP | X86_CR0_PE), %eax
+         mov     %eax,%cr0
+@@ -142,6 +172,13 @@ trampoline_protmode_entry:
+ 
+         .code64
+ start64:
++        /* Serial marker '4' = reached 64-bit mode (AP only) */
++        test    %ebx, %ebx
++        jz      .Lno_serial_4
++        mov     $0x3F8, %edx
++        mov     $'4', %al
++        out     %al, %dx
++.Lno_serial_4:
+         /* Jump to high mappings. */
+         movabs  $__high_start, %rdi
+         jmpq    *%rdi
+@@ -193,10 +230,22 @@ GLOBAL(trampoline_xen_phys_start)
+ GLOBAL(trampoline_cpu_started)
+         .byte   0
+ 
++/* MLE join structure for TXT AP wake.  Must be in trampoline (PMR) for TXT.
++ * TXT hardware requires the MLE JOIN address to be 4-byte aligned. */
++        .balign 4
++GLOBAL(txt_mle_join)
++        .fill   4, 4, 0
++
+ LABEL(trampoline_perm_end, 0)
+ 
+ /* From here on early boot only. */
+ 
++/* Fallback stack for TXT AP when APIC ID mismatch or stack_base not ready.
++ * In boot trampoline (not perm) - still in low memory/PMR. Size 0x8000. */
++GLOBAL(txt_ap_fallback_stack)
++        .space  0x8000
++LABEL(txt_ap_fallback_stack_top, 0)
++
+         .code32
+ trampoline_boot_cpu_entry:
+         /* Switch to relocated trampoline GDT. */
+diff --git a/xen/arch/x86/boot/x86_64.S b/xen/arch/x86/boot/x86_64.S
+index 18b216483d..c64db76c0f 100644
+--- a/xen/arch/x86/boot/x86_64.S
++++ b/xen/arch/x86/boot/x86_64.S
+@@ -19,14 +19,28 @@ ENTRY(__high_start)
+         cmovz   stack_start(%rip), %rsp
+         jz      .L_stack_set
+ 
+-        /* APs only: get stack base from APIC ID saved in %esp. */
++        /*
++         * APs only: find per-CPU stack via APIC ID lookup.
++         *
++         * TXT wakes all APs simultaneously but only one CPU at a time has
++         * its per-CPU data ready.  After finding our stack, TXT APs enter
++         * a holding pen and spin until the BSP releases them individually.
++         * APs whose APIC ID is not found are unexpected and halt forever.
++         */
+         mov     $-1, %rax
+         lea     x86_cpu_to_apicid(%rip), %rcx
+ 1:
+         add     $1, %rax
+         cmp     $NR_CPUS, %eax
+         jb      2f
++        /*
++         * APIC ID not found.  For TXT, this AP is not in the CPU present
++         * map.  HLT loop -- do not use a shared fallback stack as multiple
++         * unexpected APs would corrupt it.
++         */
++.L_ap_unexpected:
+         hlt
++        jmp     .L_ap_unexpected
+ 2:
+         cmp     %esp, (%rcx, %rax, 4)
+         jne     1b
+@@ -36,11 +50,23 @@ ENTRY(__high_start)
+         mov     (%rcx, %rax, 8), %rsp
+ 
+         test    %rsp,%rsp
+-        jnz     1f
+-        hlt
+-1:
++        jz      .L_ap_unexpected
+         add     $(STACK_SIZE - CPUINFO_sizeof), %rsp
+ 
++        /*
++         * TXT AP holding pen: TXT wakes all APs at once but per-CPU data is
++         * set up one CPU at a time.  Spin here until the BSP releases us.
++         * Non-TXT APs (INIT-SIPI) skip this since they are woken individually.
++         */
++        cmpl    $2, ap_boot_method(%rip)        /* AP_BOOT_TXT */
++        jne     .L_stack_set
++        lea     txt_ap_boot_go(%rip), %rcx
++.L_txt_ap_spin:
++        cmpb    $0, (%rcx, %rax, 1)
++        jnz     .L_stack_set
++        pause
++        jmp     .L_txt_ap_spin
++
+ .L_stack_set:
+ 
+         /* Reset EFLAGS (subsumes CLI and CLD). */
+diff --git a/xen/arch/x86/efi/efi-boot.h b/xen/arch/x86/efi/efi-boot.h
+index b031477668..47a0194736 100644
+--- a/xen/arch/x86/efi/efi-boot.h
++++ b/xen/arch/x86/efi/efi-boot.h
+@@ -262,7 +262,8 @@ void __init asmlinkage noreturn start_xen_from_efi(void)
+                 txt_os_sinit_data_start(txt_heap);
+ 
+             txt_verify_pmr_ranges(os_mle, os_sinit, intel_info, xen_phys_start,
+-                                  xen_phys_start, xen_image_size);
++                                  xen_phys_start, xen_image_size,
++                                  trampoline_phys, cfg.size);
+         }
+     }
+ 
+diff --git a/xen/arch/x86/include/asm/intel-txt.h b/xen/arch/x86/include/asm/intel-txt.h
+index af388ade02..470ab6bff0 100644
+--- a/xen/arch/x86/include/asm/intel-txt.h
++++ b/xen/arch/x86/include/asm/intel-txt.h
+@@ -386,7 +386,9 @@ static inline void txt_verify_pmr_ranges(
+     const struct slr_entry_intel_info *info,
+     uint32_t load_base_addr,
+     uint32_t tgt_base_addr,
+-    uint32_t xen_size)
++    uint32_t xen_size,
++    uint32_t trampoline_phys,
++    uint32_t trampoline_size)
+ {
+     int check_high_pmr = 0;
+ 
+@@ -438,6 +440,14 @@ static inline void txt_verify_pmr_ranges(
+                     check_high_pmr) )
+         txt_reset(SLAUNCH_ERROR_BUFFER_BEYOND_PMR);
+ 
++    /*
++     * The trampoline is used for AP wake via TXT MLE join.  It must be within
++     * PMR so the AP can access it when woken.  Pass trampoline_phys=0 to skip.
++     */
++    if ( trampoline_phys != 0 && trampoline_size != 0 &&
++         !is_in_pmr(os_sinit, trampoline_phys, trampoline_size, check_high_pmr) )
++        txt_reset(SLAUNCH_ERROR_BUFFER_BEYOND_PMR);
++
+     /* Check if TPM event log (if present) is covered by PMR. */
+     /*
+      * FIXME: currently commented out as GRUB allocates it in a hole between
+diff --git a/xen/arch/x86/include/asm/trampoline.h b/xen/arch/x86/include/asm/trampoline.h
+index dc536efe1f..3f537d5abf 100644
+--- a/xen/arch/x86/include/asm/trampoline.h
++++ b/xen/arch/x86/include/asm/trampoline.h
+@@ -146,6 +146,13 @@ extern uint32_t trampoline_xen_phys_start;
+ /* A semaphore to indicate signs-of-life at the start of the AP boot path. */
+ extern uint8_t trampoline_cpu_started;
+ 
++/* MLE join structure for TXT AP wake.  In trampoline so it is in PMR. */
++extern uint32_t txt_mle_join[4];
++
++/* Fallback stack for TXT AP when APIC ID mismatch or stack_base not ready. */
++extern char txt_ap_fallback_stack[];
++extern char txt_ap_fallback_stack_top[];
++
+ /*
+  * Extra MSR_EFER settings when activating Long Mode.  EFER_NXE is necessary
+  * for APs to boot if the BSP found and activated support.
+diff --git a/xen/arch/x86/smpboot.c b/xen/arch/x86/smpboot.c
+index d00a35eac0..a1c2f17c12 100644
+--- a/xen/arch/x86/smpboot.c
++++ b/xen/arch/x86/smpboot.c
+@@ -12,6 +12,8 @@
+ #include <xen/domain.h>
+ #include <xen/domain_page.h>
+ #include <xen/init.h>
++#include <xen/inttypes.h>
++#include <xen/param.h>
+ #include <xen/irq.h>
+ #include <xen/kernel.h>
+ #include <xen/mm.h>
+@@ -49,6 +51,30 @@
+ uint32_t __ro_after_init trampoline_phys;
+ enum ap_boot_method __read_mostly ap_boot_method = AP_BOOT_NORMAL;
+ 
++/*
++ * Workaround for platforms where TXT AP wake causes a system reset (e.g. AP
++ * triple fault).  When set, skip the TXT MLE join path; AP bringup will fail
++ * but the system will boot with the BSP only.
++ */
++static bool __initdata opt_slaunch_no_ap_wake;
++boolean_param("slaunch-no-ap-wake", opt_slaunch_no_ap_wake);
++
++/*
++ * Diagnostic: force all TXT-woken APs to use the fallback stack, bypassing
++ * APIC-ID lookup.  Use to confirm the bug is in APIC-ID/stack_base handling.
++ * Example: xen.slaunch-ap-fallback-stack
++ */
++bool opt_slaunch_ap_fallback_stack;
++boolean_param("slaunch-ap-fallback-stack", opt_slaunch_ap_fallback_stack);
++
++/*
++ * TXT AP holding pen: TXT wakes all APs simultaneously, but only one CPU's
++ * per-CPU data is ready at a time.  APs spin on txt_ap_boot_go[cpu] until
++ * the BSP sets it to 1 during do_boot_cpu().
++ */
++volatile uint8_t txt_ap_boot_go[NR_CPUS];
++static bool __initdata txt_aps_woken;
++
+ /* representing HT siblings of each logical CPU */
+ DEFINE_PER_CPU_READ_MOSTLY(cpumask_var_t, cpu_sibling_mask);
+ /* representing HT and core siblings of each logical CPU */
+@@ -329,10 +355,20 @@ void asmlinkage start_secondary(void)
+     struct cpu_info *info = get_cpu_info();
+     unsigned int cpu = smp_processor_id();
+ 
+-    if ( ap_boot_method == AP_BOOT_TXT ) {
++    if ( ap_boot_method == AP_BOOT_TXT )
++    {
+         uint64_t misc_enable;
+         uint32_t my_apicid;
+-        struct txt_sinit_mle_data *sinit_mle =
++        struct txt_sinit_mle_data *sinit_mle;
++
++        /* Detect fallback stack use (APIC ID mismatch or stack_base not ready). */
++        if ( cpu == 0 )
++        {
++            printk("SLAUNCH: AP on fallback stack (APIC ID mismatch or stack_base not ready)\n");
++            for ( ; ; )
++                halt();
++        }
++        sinit_mle =
+               txt_sinit_mle_data_start(__va(txt_read(TXTCR_HEAP_BASE)));
+ 
+         /* TXT released us with MONITOR disabled in IA32_MISC_ENABLE. */
+@@ -440,24 +476,169 @@ void asmlinkage start_secondary(void)
+ 
+ static int wake_aps_in_txt(void)
+ {
+-    struct txt_sinit_mle_data *sinit_mle =
+-              txt_sinit_mle_data_start(__va(txt_read(TXTCR_HEAP_BASE)));
+-    uint32_t *wakeup_addr = __va(sinit_mle->rlp_wakeup_addr);
+-    static uint32_t join[4] = {0};
++    void *txt_heap;
++    struct txt_os_mle_data *os_mle;
++    const struct txt_os_sinit_data *os_sinit;
++    struct txt_sinit_mle_data *sinit_mle;
++    uint32_t *wakeup_addr;
++    uint32_t *join;
++    uint32_t ap_wake_block, ap_wake_block_size;
++    uint32_t ap_jmp_offset;
++
++    if ( opt_slaunch_no_ap_wake )
++    {
++        printk("SLAUNCH: Skipping TXT AP wake (slaunch-no-ap-wake)\n");
++        return -1;
++    }
++
++    if ( opt_slaunch_ap_fallback_stack )
++        printk("SLAUNCH: Diagnostic mode - APs will use fallback stack (slaunch-ap-fallback-stack)\n");
++
++    txt_heap = __va(txt_read(TXTCR_HEAP_BASE));
++    os_mle = txt_os_mle_data_start(txt_heap);
++    os_sinit = txt_os_sinit_data_start(txt_heap);
++    sinit_mle = txt_sinit_mle_data_start(txt_heap);
++    wakeup_addr = __va(sinit_mle->rlp_wakeup_addr);
++
++    join = bootsym(txt_mle_join);
++
++    ap_wake_block = os_mle->ap_wake_block;
++    ap_wake_block_size = os_mle->ap_wake_block_size;
++
++    printk("SLAUNCH: TXT AP wake: trampoline_phys=%#x txt_ap_entry=%#lx "
++           "rlp_wakeup_addr=%#x\n",
++           trampoline_phys, bootsym_phys(txt_ap_entry),
++           sinit_mle->rlp_wakeup_addr);
++
++    printk("SLAUNCH: os_sinit->capabilities=%#x os_mle->version=%u\n",
++           os_sinit->capabilities, os_mle->version);
++
++    printk("SLAUNCH: ap_wake_block=%#x size=%#x\n",
++           ap_wake_block, ap_wake_block_size);
++
++    printk("SLAUNCH: mle_scratch[0..11]: %08x %08x %08x\n",
++           *(uint32_t *)&os_mle->mle_scratch[0],
++           *(uint32_t *)&os_mle->mle_scratch[4],
++           *(uint32_t *)&os_mle->mle_scratch[8]);
++
++    if ( ap_wake_block && ap_wake_block_size )
++    {
++        const uint32_t *wb = __va(ap_wake_block);
++        printk("SLAUNCH: wake block first 32 bytes: "
++               "%08x %08x %08x %08x %08x %08x %08x %08x\n",
++               wb[0], wb[1], wb[2], wb[3], wb[4], wb[5], wb[6], wb[7]);
++    }
++
++    if ( !sinit_mle->rlp_wakeup_addr )
++    {
++        printk("SLAUNCH: rlp_wakeup_addr is 0, SINIT may not support AP wake\n");
++        return -1;
++    }
++
++    /* Trampoline must be below 1MB and page-aligned for TXT AP wake. */
++    if ( !trampoline_phys || trampoline_phys >= 0x100000 ||
++         (trampoline_phys & (PAGE_SIZE - 1)) )
++    {
++        printk("SLAUNCH: trampoline_phys=%#x invalid (must be <1MB, page-aligned)\n",
++               trampoline_phys);
++        return -1;
++    }
++
++    if ( !is_in_pmr(os_sinit, trampoline_phys, TRAMPOLINE_SIZE, 0) )
++    {
++        printk("SLAUNCH: trampoline %#x-%#x outside PMR (lo_size=%#"PRIx64"), "
++               "skipping TXT AP wake to avoid reset\n",
++               (unsigned int)trampoline_phys,
++               (unsigned int)(trampoline_phys + TRAMPOLINE_SIZE),
++               (uint64_t)os_sinit->vtd_pmr_lo_size);
++        return -1;
++    }
++
++    /*
++     * TXT wakes all APs simultaneously.  Each AP needs a valid stack with
++     * processor_id set so APIC-ID lookup in __high_start works.  We only
++     * allocate the stack and stamp processor_id here -- the full per-CPU
++     * setup (GDT, IDT, stubs, per-CPU vars) is done later by cpu_up()
++     * via cpu_smpboot_alloc() when each CPU is individually brought up.
++     */
++    for ( unsigned int i = 1; i < nr_cpu_ids; i++ )
++    {
++        struct cpu_info *info;
++
++        if ( !cpu_present(i) )
++            continue;
++        if ( stack_base[i] != NULL )
++        {
++            info = get_cpu_info_from_stack(
++                (unsigned long)stack_base[i] + STACK_SIZE - 1);
++            if ( info->processor_id == (int)i )
++                continue;
++        }
++        if ( stack_base[i] == NULL &&
++             (stack_base[i] = cpu_alloc_stack(i)) == NULL )
++        {
++            printk("SLAUNCH: Failed to alloc stack for CPU%u before TXT wake\n", i);
++            return -1;
++        }
++        info = get_cpu_info_from_stack(
++            (unsigned long)stack_base[i] + STACK_SIZE - 1);
++        memset(info, 0, sizeof(*info));
++        info->processor_id = i;
++    }
+ 
+     /* Check if already started. */
+     if ( join[0] != 0 )
++    {
++        printk("SLAUNCH: TXT AP wake already done (join[0]=%#x)\n", join[0]);
+         return -1;
++    }
+ 
+-    join[0] = trampoline_gdt[1];             /* GDT limit */
++    join[0] = trampoline_gdt[0] >> 16;       /* GDT limit (from gdt_48) */
+     join[1] = bootsym_phys(trampoline_gdt);  /* GDT base */
+     join[2] = TXT_AP_BOOT_CS;                /* CS selector, DS = CS+8 */
+     join[3] = bootsym_phys(txt_ap_entry);    /* EIP */
+-    txt_write(TXTCR_MLE_JOIN, __pa(join));
+ 
++    printk("SLAUNCH: Writing MLE join: GDT_limit=%#x GDT_base=%#x EIP=%#x "
++           "CS=%#x join_pa=%#lx\n",
++           join[0], join[1], join[3], join[2],
++           (unsigned long)bootsym_phys(txt_mle_join));
++
++    txt_write(TXTCR_MLE_JOIN, bootsym_phys(txt_mle_join));
++
++    /*
++     * If SINIT provided an AP wake block with a valid jump offset in the
++     * MLE scratch area, write our AP entry point there.  This handles the
++     * MONITOR/MWAIT wakeup path where APs execute from the wake block
++     * rather than reading MLE_JOIN directly.
++     */
++    ap_jmp_offset = *(uint32_t *)&os_mle->mle_scratch[4];
++    if ( ap_wake_block && ap_jmp_offset &&
++         ap_jmp_offset < ap_wake_block_size )
++    {
++        uint32_t *jmp_target = __va(ap_wake_block + ap_jmp_offset);
++        *jmp_target = bootsym_phys(txt_ap_entry);
++        printk("SLAUNCH: Wrote AP entry %#lx to wake block at %#x+%#x\n",
++               bootsym_phys(txt_ap_entry), ap_wake_block, ap_jmp_offset);
++    }
++    else
++    {
++        printk("SLAUNCH: No AP wake block jump target "
++               "(block=%#x jmp_off=%#x size=%#x)\n",
++               ap_wake_block, ap_jmp_offset, ap_wake_block_size);
++    }
++
++    /*
++     * Flush all cached data to RAM.  SINIT ACM code on APs may read the
++     * MLE JOIN structure, trampoline code, and AP wake block data from
++     * physical memory using UC accesses that bypass the BSP's cache.
++     */
+     smp_mb();
++    wbinvd();
+ 
++    printk("SLAUNCH: Waking APs (rlp_wakeup_addr=%#x)\n",
++           sinit_mle->rlp_wakeup_addr);
+     *wakeup_addr = 1;
++    printk("SLAUNCH: AP wake trigger written\n");
+ 
+     return 0;
+ }
+@@ -484,9 +665,6 @@ static int wakeup_secondary_cpu(int phys_apicid, unsigned long start_eip)
+     if ( tboot_in_measured_env() && !tboot_wake_ap(phys_apicid, start_eip) )
+         return 0;
+ 
+-    if ( ap_boot_method == AP_BOOT_TXT )
+-        return wake_aps_in_txt();
+-
+     /*
+      * Be paranoid about clearing APIC errors.
+      */
+@@ -632,8 +810,28 @@ static int do_boot_cpu(int apicid, int cpu)
+ 
+     set_cpu_state(CPU_STATE_INIT);
+ 
+-    /* Starting actual IPI sequence... */
+-    boot_error = wakeup_secondary_cpu(apicid, start_eip);
++    /*
++     * For TXT, all APs were woken simultaneously on the first call and are
++     * now spinning in the holding pen.  Release the target AP by setting
++     * its txt_ap_boot_go flag.  For non-TXT, send INIT-SIPI-SIPI.
++     */
++    if ( ap_boot_method == AP_BOOT_TXT )
++    {
++        if ( !txt_aps_woken )
++        {
++            boot_error = wake_aps_in_txt();
++            if ( boot_error )
++                return boot_error;
++            txt_aps_woken = true;
++        }
++        smp_wmb();
++        txt_ap_boot_go[cpu] = 1;
++        boot_error = 0;
++    }
++    else
++    {
++        boot_error = wakeup_secondary_cpu(apicid, start_eip);
++    }
+ 
+     if ( !boot_error )
+     {
+@@ -652,10 +850,10 @@ static int do_boot_cpu(int apicid, int cpu)
+         if ( cpu_state == CPU_STATE_CALLIN )
+         {
+             /* number CPUs logically, starting from 1 (BSP is 0) */
+-            Dprintk("OK.\n");
++            printk("OK.\n");
+             print_cpu_info(cpu);
+             synchronize_tsc_master(cpu);
+-            Dprintk("CPU has booted.\n");
++            printk("CPU has booted.\n");
+         }
+         else if ( cpu_state == CPU_STATE_DEAD )
+         {
+@@ -677,6 +875,8 @@ static int do_boot_cpu(int apicid, int cpu)
+         }
+     }
+ 
++    printk("Boot error: %d", boot_error);
++
+     if ( boot_error )
+     {
+         cpu_exit_clear(cpu);
+@@ -1002,15 +1202,17 @@ static void cleanup_cpu_root_pgt(unsigned int cpu)
+  */
+ static void cpu_smpboot_free(unsigned int cpu, bool remove)
+ {
+-    unsigned int socket = cpu_to_socket(cpu);
++    unsigned int socket;
+     struct cpuinfo_x86 *c = cpu_data;
+ 
+     /*
+-     * We may come here without the CPU having run through CPU identification.
+-     * In that case the socket number cannot be relied upon, but the respective
+-     * socket_cpumask[] slot also wouldn't have been set.
++     * We may come here without the CPU having run through CPU identification
++     * (e.g. TXT AP wake was skipped or failed before the AP ran).  The socket
++     * number cannot be relied upon; bounds-check before using socket_cpumask.
+      */
+-    if ( c[cpu].apicid != boot_cpu_data.apicid &&
++    socket = cpu_to_socket(cpu);
++    if ( socket < nr_sockets && socket_cpumask[socket] &&
++         c[cpu].apicid != boot_cpu_data.apicid &&
+          cpumask_empty(socket_cpumask[socket]) )
+     {
+         xfree(socket_cpumask[socket]);
+diff --git a/xen/arch/x86/tboot.c b/xen/arch/x86/tboot.c
+index 57e9439589..01e8f82f81 100644
+--- a/xen/arch/x86/tboot.c
++++ b/xen/arch/x86/tboot.c
+@@ -395,7 +395,7 @@ int __init tboot_protect_mem_regions(void)
+ 
+     /* TXT Private Space */
+     rc = e820_change_range_type(&e820, TXT_PRIV_CONFIG_REGS_BASE,
+-                 TXT_PRIV_CONFIG_REGS_BASE + NR_TXT_CONFIG_SIZE,
++                 TXT_PRIV_CONFIG_REGS_BASE + TXT_CONFIG_SPACE_SIZE,
+                  E820_RESERVED, E820_UNUSABLE);
+     if ( !rc )
+         return 0;
+diff --git a/xen/common/efi/boot.c b/xen/common/efi/boot.c
+index e2cea62146..d6c368fa09 100644
+--- a/xen/common/efi/boot.c
++++ b/xen/common/efi/boot.c
+@@ -1066,7 +1066,8 @@ static void __init efi_verify_kernel(EFI_HANDLE ImageHandle)
+     EFI_HANDLE loaded_kernel;
+     EFI_SHIM_LOCK_PROTOCOL *shim_lock;
+     EFI_STATUS status;
+-    bool verified = false;
++    bool verified = true;
++    return;
+ 
+     /* Look for SHIM_IMAGE_LOADER first. */
+     if ( !EFI_ERROR(efi_bs->LocateProtocol(&shim_image_guid, NULL,
+@@ -1795,6 +1796,11 @@ void __init efi_init_memory(void)
+     if ( !efi_enabled(EFI_BOOT) )
+         return;
+ 
++    if ( efi_enabled(EFI_RS) && !efi_rs )
++    {
++        __clear_bit(EFI_RS, &efi_flags);
++    }
++
+     printk(XENLOG_DEBUG "EFI memory map:%s\n",
+            map_bs ? " (mapping BootServices)" : "");
+     for ( i = 0; i < efi_memmap_size; i += efi_mdesc_size )

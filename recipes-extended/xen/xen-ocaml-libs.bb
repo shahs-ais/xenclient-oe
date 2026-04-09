@@ -1,11 +1,11 @@
 DESCRIPTION = "Xen hypervisor ocaml libs and xenstore components"
 
+# RELEASE-4.21.1
+SRCREV = "f1a1e629d0cc4729d10e86104ce157732bcabaca"
 XEN_REL = "4.21"
-XEN_BRANCH ?= "stable-${XEN_REL}"
-SRCREV ?= "${AUTOREV}"
 
 SRC_URI = " \
-    git://xenbits.xen.org/xen.git;branch=${XEN_BRANCH} \
+    git://xenbits.xen.org/xen.git;nobranch=1 \
     file://xenstored.initscript \
     file://oxenstored.conf \
     "

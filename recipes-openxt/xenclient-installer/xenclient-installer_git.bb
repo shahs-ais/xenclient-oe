@@ -5,8 +5,10 @@ LIC_FILES_CHKSUM = "file://COPYING;md5=4641e94ec96f98fabc56ff9cc48be14b"
 PV = "0+git${SRCPV}"
 
 SRCREV = "${AUTOREV}"
+
+# Temporary change to test with installer changes
 SRC_URI = " \
-    git://github.com/OpenXT/installer.git;protocol=https \
+    git://github.com/shahs-ais/installer.git;branch=shahs/RemoveTboot \
     file://network.ans \
     file://network_download_win.ans \
     file://network_manual.ans \

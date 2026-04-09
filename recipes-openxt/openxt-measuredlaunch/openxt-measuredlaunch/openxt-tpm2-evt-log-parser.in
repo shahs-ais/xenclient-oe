@@ -1,0 +1,8 @@
+#!/bin/sh
+# Wrapper for AEM-style TPM2 event log parser (gawk + readfile extension).
+# @LIBDIR@ and @BINDIR@ are substituted at install time.
+
+set -e
+AWKPATH="${AWKPATH:+$AWKPATH:}@LIBDIR@/openxt"
+export AWKPATH
+exec @BINDIR@/gawk -bf @LIBDIR@/openxt/tpm2-evt-log-parser.awk "$@"

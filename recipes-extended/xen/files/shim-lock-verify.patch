@@ -1,0 +1,311 @@
+diff --git a/xen/common/efi/boot.c b/xen/common/efi/boot.c
+index d6c368fa09..0ababd8da2 100644
+--- a/xen/common/efi/boot.c
++++ b/xen/common/efi/boot.c
+@@ -64,13 +64,44 @@ typedef struct {
+     EFI_SYSTEM_RESOURCE_ENTRY Entries[];
+ } EFI_SYSTEM_RESOURCE_TABLE;
+ 
++/*
++ * Must match OpenXT shim after
++ * 0003-Add-Measure-function-to-the-shim-lock-protocol.patch (shim.h SHIM_LOCK):
++ * Verify, Hash, Context, Measure — same order as rhboot/shim plus Measure.
++ */
++struct _PE_COFF_LOADER_IMAGE_CONTEXT;
++typedef struct _PE_COFF_LOADER_IMAGE_CONTEXT PE_COFF_LOADER_IMAGE_CONTEXT;
++
+ typedef EFI_STATUS
+ (/* _not_ EFIAPI */ *EFI_SHIM_LOCK_VERIFY) (
+     IN const VOID *Buffer,
+     IN UINT32 Size);
+ 
++typedef EFI_STATUS
++(*EFI_SHIM_LOCK_HASH) (
++    char *data,
++    int datasize,
++    PE_COFF_LOADER_IMAGE_CONTEXT *context,
++    UINT8 *sha256hash,
++    UINT8 *sha1hash);
++
++typedef EFI_STATUS
++(*EFI_SHIM_LOCK_CONTEXT) (
++    VOID *data,
++    unsigned int datasize,
++    PE_COFF_LOADER_IMAGE_CONTEXT *context);
++
++typedef EFI_STATUS
++(*EFI_SHIM_LOCK_MEASURE) (
++    IN const VOID *buffer,
++    IN UINT32 size,
++    IN UINT8 pcr);
++
+ typedef struct {
+     EFI_SHIM_LOCK_VERIFY Verify;
++    EFI_SHIM_LOCK_HASH Hash;
++    EFI_SHIM_LOCK_CONTEXT Context;
++    EFI_SHIM_LOCK_MEASURE Measure;
+ } EFI_SHIM_LOCK_PROTOCOL;
+ 
+ typedef struct _SHIM_IMAGE_LOADER {
+@@ -351,6 +382,14 @@ static void __init noreturn PrintErrMesg(const CHAR16 *mesg, EFI_STATUS ErrCode)
+     blexit(mesg);
+ }
+ 
++static void __init PrintStatusMesg(const CHAR16 *mesg, EFI_STATUS code)
++{
++    PrintStr(mesg);
++    PrintStr(L": ");
++    DisplayUint(code, 0);
++    PrintStr(newline);
++}
++
+ static unsigned int __init get_argv(unsigned int argc, CHAR16 **argv,
+                                     VOID *data, UINTN size, UINTN *offset,
+                                     CHAR16 **options)
+@@ -1058,48 +1097,85 @@ static UINTN __init efi_find_gop_mode(EFI_GRAPHICS_OUTPUT_PROTOCOL *gop,
+     return gop_mode;
+ }
+ 
+-static void __init efi_verify_kernel(EFI_HANDLE ImageHandle)
++/*
++ * SHIM_LOCK may not be visible to LocateProtocol() when Xen is chain-loaded
++ * (e.g. shim -> grub -> xen.efi); it is often installed on shim's image handle.
++ * Try global LocateProtocol, walk the LoadedImage parent chain, then enumerate
++ * all handles that expose SHIM_LOCK.
++ */
++static EFI_SHIM_LOCK_PROTOCOL *__init efi_find_shim_lock(EFI_HANDLE ImageHandle)
+ {
+-    static EFI_GUID __initdata shim_image_guid = SHIM_IMAGE_LOADER_GUID;
++    static EFI_GUID __initdata loaded_image_guid = LOADED_IMAGE_PROTOCOL;
+     static EFI_GUID __initdata shim_lock_guid = SHIM_LOCK_PROTOCOL_GUID;
+-    SHIM_IMAGE_LOADER *shim_loader;
+-    EFI_HANDLE loaded_kernel;
+-    EFI_SHIM_LOCK_PROTOCOL *shim_lock;
++    EFI_SHIM_LOCK_PROTOCOL *shim_lock = NULL;
++    EFI_LOADED_IMAGE *loaded_image = NULL;
++    EFI_HANDLE h;
++    unsigned int depth;
+     EFI_STATUS status;
+-    bool verified = true;
+-    return;
++    UINTN i, count = 0;
++    EFI_HANDLE *handles = NULL;
+ 
+-    /* Look for SHIM_IMAGE_LOADER first. */
+-    if ( !EFI_ERROR(efi_bs->LocateProtocol(&shim_image_guid, NULL,
+-                                           (void **)&shim_loader)) )
++    /*
++     * Prefer SHIM_LOCK from the loader chain first (shim -> grub -> xen),
++     * then fall back to global lookup.
++     */
++    for ( h = ImageHandle, depth = 0; depth < 16 && h; depth++ )
+     {
+-        status = shim_loader->LoadImage(false, ImageHandle, NULL,
+-                                        (void *)kernel.ptr, kernel.size,
+-                                        &loaded_kernel);
+-        if ( !EFI_ERROR(status) )
+-            verified = true;
+-
+-        /*
+-         * Always unload the image.  We only needed LoadImage() to perform
+-         * verification anyway, and in the case of a failure there may still
+-         * be cleanup needing to be performed.
+-         */
+-        shim_loader->UnloadImage(loaded_kernel);
++        status = efi_bs->OpenProtocol(h, &shim_lock_guid,
++                                      (void **)&shim_lock, ImageHandle,
++                                      NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
++        if ( !EFI_ERROR(status) && shim_lock )
++            return shim_lock;
++
++        status = efi_bs->OpenProtocol(h, &loaded_image_guid,
++                                      (void **)&loaded_image, ImageHandle,
++                                      NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
++        if ( EFI_ERROR(status) || !loaded_image )
++            break;
++        h = loaded_image->ParentHandle;
+     }
+ 
+-    /* Otherwise, fall back to SHIM_LOCK. */
+-    if ( !verified &&
+-         !EFI_ERROR(efi_bs->LocateProtocol(&shim_lock_guid, NULL,
++    if ( !EFI_ERROR(efi_bs->LocateProtocol(&shim_lock_guid, NULL,
+                                            (void **)&shim_lock)) &&
+-         shim_lock->Verify(kernel.ptr, kernel.size) == EFI_SUCCESS )
+-        verified = true;
++         shim_lock )
++        return shim_lock;
+ 
+-    if ( !verified )
++    if ( !EFI_ERROR(efi_bs->LocateHandleBuffer(ByProtocol, &shim_lock_guid,
++                                               NULL, &count, &handles)) &&
++         count && handles )
+     {
+-        PrintStr(L"Kernel was not verified\n");
++        for ( i = 0; i < count; i++ )
++        {
++            status = efi_bs->OpenProtocol(handles[i], &shim_lock_guid,
++                                          (void **)&shim_lock, ImageHandle,
++                                          NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
++            if ( !EFI_ERROR(status) && shim_lock )
++            {
++                efi_bs->FreePool(handles);
++                return shim_lock;
++            }
++        }
++        efi_bs->FreePool(handles);
++    }
+ 
+-        if ( efi_secure_boot )
+-            blexit(L"Refusing to boot unverified kernel with UEFI SecureBoot enabled");
++    return NULL;
++}
++
++static void __init efi_verify_kernel(EFI_HANDLE ImageHandle,
++                                     EFI_SHIM_LOCK_PROTOCOL *shim_lock)
++{
++    EFI_STATUS status;
++
++    /* Otherwise, fall back to SHIM_LOCK. */
++    if ( efi_secureboot_enabled() )
++    {
++        if ( (status = shim_lock->Verify(kernel.ptr, kernel.size)) != EFI_SUCCESS )
++            PrintStr(L"Dom0 kernel image could not be verified");
++    }
++    else
++    {
++        if ( (status = shim_lock->Measure(kernel.ptr, kernel.size, 4)) != EFI_SUCCESS )
++            PrintStr(L"Dom0 kernel image could not be measured");
+     }
+ }
+ 
+@@ -1393,11 +1469,13 @@ void EFIAPI __init noreturn efi_start(EFI_HANDLE ImageHandle,
+                                       EFI_SYSTEM_TABLE *SystemTable)
+ {
+     static EFI_GUID __initdata loaded_image_guid = LOADED_IMAGE_PROTOCOL;
++    static CHAR16 __initdata str_openxt[] = L"openxt.cfg";
+     EFI_LOADED_IMAGE *loaded_image;
+     EFI_STATUS status;
+     unsigned int i;
+-    CHAR16 *file_name, *cfg_file_name = NULL, *options = NULL;
++    CHAR16 *file_name, *cfg_file_name = str_openxt, *options = NULL;
+     UINTN gop_mode = ~0;
++    EFI_SHIM_LOCK_PROTOCOL *shim_lock = NULL;
+     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+     union string section = { NULL }, name;
+     bool base_video = false;
+@@ -1485,6 +1563,10 @@ void EFIAPI __init noreturn efi_start(EFI_HANDLE ImageHandle,
+     PrintStr(L"Xen " XEN_VERSION_STRING XEN_EXTRAVERSION
+ 	     " (c/s " XEN_CHANGESET ") EFI loader\r\n");
+ 
++    shim_lock = efi_find_shim_lock(ImageHandle);
++    if ( !shim_lock )
++        PrintStr(L"No Shim Lock Protocol\r\n");
++
+     efi_arch_relocate_image(0);
+ 
+     if ( use_cfg_file )
+@@ -1526,6 +1608,18 @@ void EFIAPI __init noreturn efi_start(EFI_HANDLE ImageHandle,
+         }
+         else if ( !read_file(dir_handle, cfg_file_name, &cfg, NULL) )
+             blexit(L"Configuration file not found.");
++
++        if ( !shim_lock )
++        {
++            PrintStr(L"No shim found, booting xen.efi directly with OpenXT is not supported.");
++            efi_bs->Stall(10000000);
++            blexit(L"No shim found");
++        }
++
++        if ( shim_lock &&
++            (status = shim_lock->Measure(cfg.ptr, cfg.size, 8)) != EFI_SUCCESS )
++                PrintStatusMesg(L"Configuration file could not be measured", status);
++
+         pre_parse(&cfg);
+ 
+         if ( section.w )
+@@ -1580,6 +1674,11 @@ void EFIAPI __init noreturn efi_start(EFI_HANDLE ImageHandle,
+             {
+                 read_file(dir_handle, s2w(&name), &ramdisk, NULL);
+                 efi_bs->FreePool(name.w);
++
++                if ( shim_lock &&
++                    (status = shim_lock->Measure(ramdisk.ptr, ramdisk.size, 8))
++                     != EFI_SUCCESS )
++                        PrintStatusMesg(L"ramdisk could not be measured", status);
+             }
+         }
+ 
+@@ -1590,6 +1689,11 @@ void EFIAPI __init noreturn efi_start(EFI_HANDLE ImageHandle,
+             {
+                 read_file(dir_handle, s2w(&name), &xsm, NULL);
+                 efi_bs->FreePool(name.w);
++
++                if ( shim_lock &&
++                    (status = shim_lock->Measure(xsm.ptr, xsm.size, 8))
++                     != EFI_SUCCESS)
++                        PrintStatusMesg(L"XSM policy could not be measured", status);
+             }
+         }
+ 
+@@ -1648,8 +1752,8 @@ void EFIAPI __init noreturn efi_start(EFI_HANDLE ImageHandle,
+      * device tree through the efi_check_dt_boot function, in this stage
+      * verify it.
+      */
+-    if ( kernel.ptr && !kernel_verified )
+-        efi_verify_kernel(ImageHandle);
++    if ( kernel.ptr && shim_lock )
++        efi_verify_kernel(ImageHandle, shim_lock);
+ 
+     efi_arch_edd();
+ 
+diff --git a/xen/common/efi/runtime.c b/xen/common/efi/runtime.c
+index 2385371914..b78e8da802 100644
+--- a/xen/common/efi/runtime.c
++++ b/xen/common/efi/runtime.c
+@@ -215,6 +215,34 @@ void efi_reset_system(bool warm)
+     printk(XENLOG_WARNING "EFI: could not reset system (%#lx)\n", status);
+ }
+ 
++bool efi_secureboot_enabled(void)
++{
++    EFI_GUID efi_gv = EFI_GLOBAL_VARIABLE;
++    static CHAR16 __initdata str_SecureBoot[] = L"SecureBoot";
++    static CHAR16 __initdata str_SetupMode[] = L"SetupMode";
++    UINT8 SecureBoot = 0, SetupMode = 0;
++    UINTN DataSize = sizeof(SecureBoot);
++    EFI_STATUS efi_status;
++
++    efi_status = efi_rs->GetVariable(str_SecureBoot, &efi_gv, NULL,
++                                     &DataSize, &SecureBoot);
++    if ( EFI_ERROR(efi_status) )
++        return false;
++
++    if ( !SecureBoot )
++        return false;
++
++    efi_status = efi_rs->GetVariable(str_SetupMode, &efi_gv, NULL,
++                                     &DataSize, &SetupMode);
++    if ( EFI_ERROR(efi_status) )
++        return false;
++
++    if ( SetupMode )
++        return false;
++
++    return true;
++}
++
+ #endif /* CONFIG_ARM */
+ 
+ const CHAR16 *wmemchr(const CHAR16 *s, CHAR16 c, UINTN n)
+diff --git a/xen/include/xen/efi.h b/xen/include/xen/efi.h
+index a08561ff45..8f071b8ad8 100644
+--- a/xen/include/xen/efi.h
++++ b/xen/include/xen/efi.h
+@@ -51,5 +51,6 @@ int efi_runtime_call(struct xenpf_efi_runtime_call *op);
+ #endif
+ int efi_compat_get_info(uint32_t idx, union compat_pf_efi_info *info);
+ int efi_compat_runtime_call(struct compat_pf_efi_runtime_call *op);
++bool efi_secureboot_enabled(void);
+ 
+ #endif /* __XEN_EFI_H__ */
