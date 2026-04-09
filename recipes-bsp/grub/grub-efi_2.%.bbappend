@@ -2,7 +2,16 @@ FILESEXTRAPATHS_prepend := "${THISDIR}/files:"
 
 SRC_URI += " \
     file://grub-efi-installer.cfg \
+    file://tcg2_srtm_test.c \
+    file://0006-makefile-core-def-add-tcg2-srtm-test.patch \
 "
+
+# Install test module source before configure (Makefile.core.def references it).
+do_configure:prepend() {
+    install -d "${S}/grub-core/commands/efi"
+    install -m 0644 "${WORKDIR}/tcg2_srtm_test.c" \
+        "${S}/grub-core/commands/efi/tcg2_srtm_test.c"
+}
 
 GRUB_BUILDIN = " \
     all_video boot btrfs cat chain configfile echo \
@@ -15,6 +24,8 @@ GRUB_BUILDIN = " \
     linux backtrace usb usbserial_common \
     usbserial_pl2303 usbserial_ftdi \
     multiboot multiboot2 \
+    smbios regexp \
+    slaunch tcg2_srtm_test \
 "
 
 EXTRA_OECONF += " \

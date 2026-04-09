@@ -1,0 +1,17 @@
+diff --git a/grub-core/Makefile.core.def b/grub-core/Makefile.core.def
+--- a/grub-core/Makefile.core.def
++++ b/grub-core/Makefile.core.def
+@@ -925,6 +925,13 @@ module = {
+   enable = x86_64_efi;
+ };
+ 
++module = {
++  name = tcg2_srtm_test;
++  common = commands/efi/tcg2_srtm_test.c;
++  enable = i386_efi;
++  enable = x86_64_efi;
++};
++
+ module = {
+   name = gptsync;
+   common = commands/gptsync.c;

@@ -1,0 +1,52 @@
+From 4df3af03c Mon Sep 17 00:00:00 2001
+From: Sergii Dmytruk <sergii.dmytruk@3mdeb.com>
+Date: Mon, 10 Nov 2025 12:33:14 -0500
+Subject: [PATCH] Improve EFI memory allocation error messages
+
+diff --git a/grub-core/kern/efi/mm.c b/grub-core/kern/efi/mm.c
+index df238b165..08aa68a18 100644
+--- a/grub-core/kern/efi/mm.c
++++ b/grub-core/kern/efi/mm.c
+@@ -139,12 +139,21 @@ grub_efi_allocate_pages_real (grub_efi_physical_address_t address,
+     }
+ 
+   b = grub_efi_system_table->boot_services;
+-  status = b->allocate_pages (alloctype, memtype, pages, &address);
+-  if (status != GRUB_EFI_SUCCESS)
+-    {
+-      grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("out of memory"));
+-      return NULL;
+-    }
++  {
++    grub_efi_physical_address_t requested_addr = address;
++    status = b->allocate_pages (alloctype, memtype, pages, &address);
++    if (status != GRUB_EFI_SUCCESS)
++      {
++	grub_error (GRUB_ERR_OUT_OF_MEMORY,
++		    N_("failed to allocate EFI pages: status 0x%x, requested address 0x%llx, pages %u, alloctype %u, memtype %u"),
++		    (unsigned int)status,
++		    (unsigned long long)requested_addr,
++		    (unsigned int)pages,
++		    (unsigned int)alloctype,
++		    (unsigned int)memtype);
++	return NULL;
++      }
++  }
+ 
+   if (address == 0)
+     {
+@@ -155,7 +164,13 @@ grub_efi_allocate_pages_real (grub_efi_physical_address_t address,
+       b->free_pages (0, pages);
+       if (status != GRUB_EFI_SUCCESS)
+ 	{
+-	  grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("out of memory"));
++	  grub_error (GRUB_ERR_OUT_OF_MEMORY,
++		      N_("failed to reallocate EFI pages (avoiding address 0): status 0x%x, requested address 0x%llx, pages %u, alloctype %u, memtype %u"),
++		      (unsigned int)status,
++		      (unsigned long long)address,
++		      (unsigned int)pages,
++		      (unsigned int)alloctype,
++		      (unsigned int)memtype);
+ 	  return NULL;
+ 	}
+     }

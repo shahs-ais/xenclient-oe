@@ -1,8 +1,7 @@
-# Hack to work around grub2.inc settings SRC_URI
-# OE_CORE_PATH defaults to a bordel build layout
-OE_CORE_PATH ?= "${TOPDIR}/layers/openembedded-core"
-FILESEXTRAPATHS_prepend := "${OE_CORE_PATH}/meta/recipes-bsp/grub/files:"
-require recipes-bsp/grub/grub2.inc
+# Use our local grub2.inc and local files directory instead of OE
+# This ensures we use the xenclient-oe version with all our fixes
+require grub2.inc
+FILESEXTRAPATHS_prepend := "${THISDIR}/files:"
 
 require conf/image-uefi.conf
 
