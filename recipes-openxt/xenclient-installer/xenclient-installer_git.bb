@@ -8,7 +8,7 @@ SRCREV = "${AUTOREV}"
 
 # Temporary change to test with installer changes
 SRC_URI = " \
-    git://github.com/shahs-ais/installer.git;branch=shahs/RemoveTboot \
+    git://github.com/shahs-ais/installer.git;branch=shahs/TrenchBootIntegration \
     file://network.ans \
     file://network_download_win.ans \
     file://network_manual.ans \

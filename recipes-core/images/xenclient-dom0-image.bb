@@ -53,10 +53,6 @@ inherit xenclient-licences
 
 require xenclient-version.inc
 
-# Workspace boot directory - can be overridden in local.conf
-# Default: ${TOPDIR}/../boot/ (assumes build directory is in workspace subdirectory)
-WORKSPACE_BOOT_DIR ?= "${TOPDIR}/../boot"
-
 post_rootfs_shell_commands() {
     mkdir -p ${IMAGE_ROOTFS}/config/etc
     mv ${IMAGE_ROOTFS}/etc/passwd ${IMAGE_ROOTFS}/config/etc
@@ -87,70 +83,6 @@ post_rootfs_shell_commands() {
 
     # Write coredumps in /var/cores
     echo 'kernel.core_pattern = /var/cores/%e-%t.%p.core' >> ${IMAGE_ROOTFS}/etc/sysctl.conf
-
-    # Copy kernel files from workspace boot directory
-    # WORKSPACE_BOOT_DIR can be set in local.conf to point to custom location
-    if [ -d "${WORKSPACE_BOOT_DIR}" ]; then
-        bbnote "Copying kernel files from workspace boot directory: ${WORKSPACE_BOOT_DIR}"
-        copied_count=0
-        # Copy all files from workspace boot directory to image boot directory
-        for file in "${WORKSPACE_BOOT_DIR}"/*; do
-            if [ -f "$file" ]; then
-                filename=$(basename "$file")
-                # Skip if file already exists (don't overwrite existing files)
-                if [ ! -f "${IMAGE_ROOTFS}/boot/$filename" ]; then
-                    bbnote "  Copying $filename to /boot/"
-                    install -m 0644 "$file" "${IMAGE_ROOTFS}/boot/$filename"
-                    copied_count=$(expr $copied_count + 1)
-                else
-                    bbnote "  Skipping $filename (already exists in /boot/)"
-                fi
-            fi
-        done
-        if [ "$copied_count" -gt 0 ]; then
-            bbnote "Copied $copied_count file(s) from workspace boot directory"
-        else
-            bbnote "No new files copied from workspace boot directory"
-        fi
-    else
-        bbnote "Workspace boot directory not found at ${WORKSPACE_BOOT_DIR}, skipping kernel file copy"
-        bbnote "  (Set WORKSPACE_BOOT_DIR in local.conf to enable this feature)"
-    fi
-
-    # Install installer files (rootfs.gz and vmlinuz) for testing installer boot process
-    # These files are used by grub-efi-installer.cfg for testing the installer boot process
-    # rootfs.gz is the installer image cpio.gz (built for openxt-installer machine)
-    # Try multiple possible locations for installer image
-    INSTALLER_ROOTFS=""
-    for possible_path in \
-        "${DEPLOY_DIR_IMAGE}/xenclient-installer-image-openxt-installer.cpio.gz" \
-        "${DEPLOY_DIR_IMAGE}/../openxt-installer/xenclient-installer-image-openxt-installer.cpio.gz" \
-        "${TOPDIR}/tmp-glibc/deploy/images/openxt-installer/xenclient-installer-image-openxt-installer.cpio.gz"; do
-        if [ -f "$possible_path" ]; then
-            INSTALLER_ROOTFS="$possible_path"
-            break
-        fi
-    done
-    
-    if [ -n "$INSTALLER_ROOTFS" ] && [ -f "$INSTALLER_ROOTFS" ]; then
-        bbnote "Installing installer rootfs.gz to /boot/ from $INSTALLER_ROOTFS"
-        install -m 0644 "$INSTALLER_ROOTFS" "${IMAGE_ROOTFS}/boot/rootfs.gz"
-    else
-        bbnote "Installer rootfs.gz not found, skipping (installer image must be built separately for openxt-installer machine)"
-    fi
-
-    # vmlinuz is typically the kernel image - try to find it or create from current kernel
-    # Check for vmlinuz in deploy directory (may be created by installer build)
-    if [ -f "${DEPLOY_DIR_IMAGE}/vmlinuz" ]; then
-        bbnote "Installing vmlinuz to /boot/ from deploy directory"
-        install -m 0644 "${DEPLOY_DIR_IMAGE}/vmlinuz" "${IMAGE_ROOTFS}/boot/vmlinuz"
-    elif [ -f "${DEPLOY_DIR_IMAGE}/${KERNEL_IMAGETYPE}" ]; then
-        # If vmlinuz doesn't exist, copy from kernel image (for testing)
-        bbnote "Creating vmlinuz from ${KERNEL_IMAGETYPE} for installer boot testing"
-        install -m 0644 "${DEPLOY_DIR_IMAGE}/${KERNEL_IMAGETYPE}" "${IMAGE_ROOTFS}/boot/vmlinuz"
-    else
-        bbnote "vmlinuz not found, skipping (kernel image: ${KERNEL_IMAGETYPE})"
-    fi
 }
 ROOTFS_POSTPROCESS_COMMAND += "post_rootfs_shell_commands; "
 
