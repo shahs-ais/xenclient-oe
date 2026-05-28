@@ -4,13 +4,17 @@ SRC_URI += " \
     file://grub-efi-installer.cfg \
     file://tcg2_srtm_test.c \
     file://0006-makefile-core-def-add-tcg2-srtm-test.patch \
+    file://shim_measure.c \
+    file://0007-makefile-core-def-add-shim-measure.patch \
 "
 
-# Install test module source before configure (Makefile.core.def references it).
+# Install custom module sources before configure (Makefile.core.def references them).
 do_configure:prepend() {
     install -d "${S}/grub-core/commands/efi"
     install -m 0644 "${WORKDIR}/tcg2_srtm_test.c" \
         "${S}/grub-core/commands/efi/tcg2_srtm_test.c"
+    install -m 0644 "${WORKDIR}/shim_measure.c" \
+        "${S}/grub-core/commands/efi/shim_measure.c"
 }
 
 GRUB_BUILDIN = " \
@@ -25,7 +29,7 @@ GRUB_BUILDIN = " \
     usbserial_pl2303 usbserial_ftdi \
     multiboot multiboot2 \
     smbios regexp \
-    slaunch tcg2_srtm_test \
+    slaunch tcg2_srtm_test shim_measure \
 "
 
 EXTRA_OECONF += " \

@@ -178,7 +178,7 @@ get_slaunch_eventlog() {
     local out_file
     local log_src="/sys/kernel/debug/slaunch_eventlog/raw.bin"
 
-    out_file="$(mktemp /tmp/slaunch-eventlog.bin)" || return 1
+    out_file="$(mktemp /tmp/slaunch-eventlog.bin.XXXXXX)" || return 1
 
     ensure_debugfs
 
@@ -243,6 +243,7 @@ parse_slaunch_evtlog() {
         inentry && /^[[:space:]]+Event:[[:space:]]*/ {
             line=$0;
             sub(/^[[:space:]]+Event:[[:space:]]*/, "", line);
+            sub(/[[:space:]]+$/, "", line);
             event=line;
             if (pcr != "" && etype != "" && digest != "")
                 printf "%s|%s|%s|%s\n", pcr, etype, digest, event;
@@ -422,8 +423,9 @@ create_policy() {
     return 0
 }
 
-# TrenchBoot PCR pre-calculator for forward sealing.
-# output: "<pcr17> <pcr18> <pcr19>"
+# TrenchBoot PCR pre-calculator for forward sealing, which parses the DRTM event log
+# to predict the PCR values for the next boot
+# output: "<pcr17> <pcr18>"
 calculate_slaunch_pcrs() {
     local root="${1:-/}"
     local conf="${2}"
@@ -433,9 +435,15 @@ calculate_slaunch_pcrs() {
     local events=""
     local events_file=""
     local map_file=""
+    local mods_file=""
+    local strings_file=""
+    local files_file=""
     local p17="0"
     local p18="0"
-    local p19=""
+    local xen_cmdline=""
+    local pcr17_idx=0
+    local pcr18_idx=0
+    local first modline path rest
 
     case "${hashalg}" in
         sha1|sha256) ;;
@@ -443,69 +451,132 @@ calculate_slaunch_pcrs() {
     esac
 
     evtlog="$(get_slaunch_eventlog)" || return 1
-    map_file="$(mktemp /tmp/slaunch-modmap)" || {
-        rm -f "${evtlog}"
-        return 1
-    }
 
-    build_module_map "${root}" "${conf}" "${srtm}" > "${map_file}" || {
-        rm -f "${evtlog}" "${map_file}"
-        return 1
-    }
+    if [ "${srtm}" -eq 1 ]; then
+        mods_file="$(mktemp /tmp/slaunch-eficfg.XXXXXX)"
+        strings_file="$(mktemp /tmp/slaunch-modstrs.XXXXXX)"
+        files_file="$(mktemp /tmp/slaunch-modfiles.XXXXXX)"
 
+        # parse_eficfg emits one line per module - <path> <module-string>
+        # in the fixed order: options (xen.efi), kernel, ramdisk, xsm, ucode
+        parse_eficfg "${conf}" > "${mods_file}" || {
+            rm -f "${evtlog}" "${mods_file}" "${strings_file}" "${files_file}"
+            return 1
+        }
+        first=1
+        while IFS= read -r modline || [ -n "${modline}" ]; do
+            [ -n "${modline}" ] || continue
+            path="${modline%% *}"
+            rest="${modline#${path}}"
+            rest="${rest# }"
+            if [ "${first}" -eq 1 ]; then
+                xen_cmdline="${rest}"
+                first=0
+            else
+                printf '%s\n' "${rest}" >> "${strings_file}"
+                printf '%s\n' "${path}" >> "${files_file}"
+            fi
+        done < "${mods_file}"
+        rm -f "${mods_file}"
+    else
+        # Legacy path
+        map_file="$(mktemp /tmp/slaunch-modmap.XXXXXX)" || {
+            rm -f "${evtlog}"
+            return 1
+        }
+        build_module_map "${root}" "${conf}" "${srtm}" > "${map_file}" || {
+            rm -f "${evtlog}" "${map_file}"
+            return 1
+        }
+    fi
+
+    # Try to parse the DRTM event log to help predict calculating the PCR values
     events="$(parse_slaunch_evtlog "${evtlog}" "${hashalg}")" || {
-        rm -f "${evtlog}" "${map_file}"
+        rm -f "${evtlog}" "${map_file}" "${strings_file}" "${files_file}"
         return 1
     }
 
-    events_file="$(mktemp /tmp/slaunch-events)" || {
-        rm -f "${evtlog}" "${map_file}"
+    events_file="$(mktemp /tmp/slaunch-events.XXXXXX)" || {
+        rm -f "${evtlog}" "${map_file}" "${strings_file}" "${files_file}"
         return 1
     }
     printf '%s\n' "${events}" > "${events_file}"
 
     while IFS='|' read -r pcr etype digest event_desc; do
         local event_digest="${digest}"
+        local sub_file=""
+        local sub_string=""
+        local have_sub_string=0
         local file_path=""
 
         [ -n "${pcr}" ] || continue
         [ -n "${event_digest}" ] || continue
 
-        # TrenchBoot launch measurements are carried in 0x502 events.
+        # TrenchBoot launch measurements are carried in 0x502 events
         if [ "${etype}" = "0x502" ]; then
-            file_path="$(resolve_slaunch_event_file "${event_desc}" "${map_file}")" || true
-            if [ -n "${file_path}" ]; then
-                event_digest="$(${hashalg}sum "${file_path}" | awk '{ print $1 }')"
+            if [ "${srtm}" -eq 1 ]; then
+                case "${pcr}|${event_desc}" in
+                "17|MB module")
+                    pcr17_idx=$((pcr17_idx + 1))
+                    sub_file="$(sed -n "${pcr17_idx}p" "${files_file}" \
+                                    2>/dev/null)"
+                    ;;
+                "18|MB module string")
+                    pcr18_idx=$((pcr18_idx + 1))
+                    sub_string="$(sed -n "${pcr18_idx}p" "${strings_file}" \
+                                      2>/dev/null)"
+                    [ -n "${sub_string}" ] && have_sub_string=1
+                    ;;
+                "18|Xen's command line")
+                    sub_string="${xen_cmdline}"
+                    [ -n "${sub_string}" ] && have_sub_string=1
+                    ;;
+                esac
+
+                if [ -n "${sub_file}" ] && [ -r "${sub_file}" ]; then
+                    event_digest="$(${hashalg}sum "${sub_file}" \
+                                        | awk '{ print $1 }')"
+                elif [ "${have_sub_string}" -eq 1 ]; then
+                    event_digest="$(printf '%s' "${sub_string}" \
+                                        | ${hashalg}sum | awk '{ print $1 }')"
+                fi
+            else
+                file_path="$(resolve_slaunch_event_file "${event_desc}" \
+                                                       "${map_file}")" || true
+                if [ -n "${file_path}" ]; then
+                    event_digest="$(${hashalg}sum "${file_path}" \
+                                        | awk '{ print $1 }')"
+                fi
             fi
         fi
 
         case "${pcr}" in
             17)
                 p17="$(hash_extend "${p17}" "${event_digest}" "${hashalg}")" || {
-                    rm -f "${evtlog}" "${map_file}" "${events_file}"
+                    rm -f "${evtlog}" "${map_file}" "${events_file}" \
+                          "${strings_file}" "${files_file}"
                     return 1
                 }
                 ;;
             18)
                 p18="$(hash_extend "${p18}" "${event_digest}" "${hashalg}")" || {
-                    rm -f "${evtlog}" "${map_file}" "${events_file}"
+                    rm -f "${evtlog}" "${map_file}" "${events_file}" \
+                          "${strings_file}" "${files_file}"
                     return 1
                 }
                 ;;
         esac
     done < "${events_file}"
 
-    p19="$(tpm_get_pcr 19 2>/dev/null || true)"
-    [ -n "${p19}" ] || p19="0"
-
-    rm -f "${evtlog}" "${map_file}" "${events_file}"
-    echo "${p17} ${p18} ${p19}"
+    rm -f "${evtlog}" "${map_file}" "${events_file}" \
+          "${strings_file}" "${files_file}"
+    echo "${p17} ${p18}"
     return 0
 }
 
 write_config_pcrs() {
     local root="${1:-/}"
-    local pcrs="0 1 2 3 4 5 7 8 15 17 18 19"
+    local pcrs="0 1 2 3 4 5 7 8 15 17 18"
 
     echo "$pcrs" > ${root}/config/config.pcrs
 }

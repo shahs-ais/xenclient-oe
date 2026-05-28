@@ -89,6 +89,7 @@ root_dev="/dev/mapper/xenclient-root"
 # UEFI spec compliant.
 pcr4_objs=(
     /boot/shimx64.efi
+    /boot/EFI/BOOT/grub-efi-bootx64.efi
     /boot/xen.efi
     /boot/bzImage
 )
@@ -139,10 +140,16 @@ seal)
     exit 0
 ;;
 forward)
-    # PCR4 holds the hashes of OpenXT's EFI applications: shim, xen and dom0 kernel.
-    # PCR8 holds the hashes of the other critical components of OpenXT's boot:
-    #  openxt.cfg, the initrd and the XSM policy.
+    # PCR4 holds the hashes of OpenXT's EFI applications: shim, grub, xen and dom0 kernel.
+    #   1) Authenticode(shimx64.efi)
+    #   2) sha256(grub-efi-bootx64.efi)
+    #   3) sha256(xen.efi)
+    #   4) sha256(bzImage)
+    #   5) Authenticode(xen.efi)
+
     # If PCR8 is all 0 we were not booting with UEFI
+    # Otherwise, PCR 8 holds openxt.cfg, initrd, XSM policy, microcode, then
+    # each SINIT ACM listed in openxt.cfg
     pcr8="$(tpm_get_pcr 8)"
     pcr17="$(tpm_get_pcr 17)"
 
@@ -154,19 +161,26 @@ forward)
 
         pcr4=$(hash_extend 0 "${ev_separator}" "${hashalg}")
 
+        # Authenticode(shim)
         hash=$(pesign -h -d "${hashalg}" -i "${pcr4_objs[0]}" | awk '{ print $2 }')
         pcr4=$(hash_extend "${pcr4}" "${hash}" "${hashalg}") ||
             err "failed to calculate pcr4"
 
+        # Extend SHA256 hashes
         for o in ${pcr4_objs[@]:1}; do
             hash=$(${hashalg}sum "${o}" | awk '{ print $1 }')
             pcr4=$(hash_extend "${pcr4}" "${hash}" "${hashalg}") ||
                 err "failed to calculate pcr4"
         done
 
+        # Authenticode(xen.efi) (from shim verify)
+        hash=$(pesign -h -d "${hashalg}" -i "${pcr4_objs[2]}" | awk '{ print $2 }')
+        pcr4=$(hash_extend "${pcr4}" "${hash}" "${hashalg}") ||
+            err "failed to calculate pcr4"
+
         pcr8="0"
 
-        for o in ${pcr8_objs[@]}; do
+        for o in "${pcr8_objs[@]}"; do
             hash=$(${hashalg}sum "${o}" | awk '{ print $1 }')
             pcr8=$(hash_extend "${pcr8}" "${hash}" "${hashalg}") ||
                 err "failed to calculate pcr8"
@@ -216,11 +230,9 @@ forward)
 
         pcr17=$(echo $pcrs | awk '{ print $1 }')
         pcr18=$(echo $pcrs | awk '{ print $2 }')
-        pcr19=$(echo $pcrs | awk '{ print $3 }')
 
         pcr_forward[17]=":${pcr17}"
         pcr_forward[18]=":${pcr18}"
-        pcr_forward[19]=":${pcr19}"
     fi
 
     rm -f /boot/system/tpm/forward_pcr.lst
